@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Only the settings file is backed up. Recorded and processed voice files are deliberately
+  NOT included: they stay on this device and are excluded by only listing the one shared-pref
+  file in this allow-list.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="vice_changer_settings.xml" />
+</full-backup-content>

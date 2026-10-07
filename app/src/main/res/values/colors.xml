@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window and launcher backdrop: deep studio purple, matching the Compose theme. -->
+    <color name="vc_window_bg">#FF0C0A12</color>
+</resources>

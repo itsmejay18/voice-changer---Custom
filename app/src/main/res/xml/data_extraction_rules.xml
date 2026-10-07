@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31+ data extraction rules. Same policy as backup_rules.xml: the settings file and
+  nothing else, so no voice recording ever leaves the device through a backup.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="vice_changer_settings.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="vice_changer_settings.xml" />
+    </device-transfer>
+</data-extraction-rules>

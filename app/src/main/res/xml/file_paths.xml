@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="processed" path="processed/" />
+    <files-path name="raw" path="raw/" />
+    <cache-path name="shared" path="share/" />
+</paths>
