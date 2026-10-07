@@ -86,17 +86,21 @@ object VoiceTransformer {
     }
 
     /**
-     * Loudness compensation: everything that shifts the spectrum up also adds energy, so
-     * without this the bright presets would be noticeably louder than the deep ones. The
-     * limiter still guarantees the ceiling; this only keeps the presets comparable.
+     * Loudness compensation: everything that shifts the spectrum up also adds energy, so without
+     * this the bright presets would be noticeably louder than the deep ones. The limiter still
+     * guarantees the ceiling; this only keeps the presets comparable.
+     *
+     * The base is deliberately positive: a voice changer that is quieter than the user's own voice
+     * is unusable when monitoring on the phone speaker, which is a real failure that was reported
+     * from the device.
      */
     fun automaticTrim(preset: VoicePreset): Float {
-        val trim = 1.6f -
+        val trim = 4.0f -
             0.35f * preset.pitch -
             0.30f * preset.brightness -
             8f * (preset.formant - 1f) -
             1.5f * preset.effectStrength
-        return trim.coerceIn(-6f, 6f)
+        return trim.coerceIn(-4f, 6f)
     }
 
     /** Pitch ratio the DSP will actually use - exposed so the UI and tests can show it. */

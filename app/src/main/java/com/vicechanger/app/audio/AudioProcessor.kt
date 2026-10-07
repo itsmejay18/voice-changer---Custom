@@ -71,13 +71,17 @@ class AudioProcessor(val sampleRate: Int = AudioConfig.SAMPLE_RATE) {
 
         if (newParams.needsPitch) {
             val ratio = PhaseVocoderStage.ratioFor(newParams.pitchSemitones)
-            pitchStage = PhaseVocoderStage(
+            val stage = PhaseVocoderStage(
                 sampleRate = sampleRate,
                 frameSize = AudioConfig.FFT_FRAME_SIZE,
                 analysisHop = AudioConfig.FFT_HOP_SIZE,
                 stretch = ratio,
             )
-            resampler = StreamingResampler(ratio)
+            pitchStage = stage
+            // Match the resampler to the hop the vocoder really uses. Driving it with the requested
+            // ratio instead starves the pipeline by ~0.13% of a sample per frame, which the engine
+            // reports as "buffer gaps" that keep growing the longer you monitor.
+            resampler = StreamingResampler(stage.effectiveStretch)
         } else {
             pitchStage = null
             resampler = null

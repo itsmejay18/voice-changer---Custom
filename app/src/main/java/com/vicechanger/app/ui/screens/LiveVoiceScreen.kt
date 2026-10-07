@@ -175,11 +175,31 @@ fun LiveVoiceScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "In: ${state.inputDevice}   -   Out: ${state.outputDevice}",
+                        text = if (state.captureSource.isBlank()) {
+                            "In: ${state.inputDevice}   -   Out: ${state.outputDevice}"
+                        } else {
+                            "In: ${state.inputDevice} [${state.captureSource}]   -   Out: ${state.outputDevice}"
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+
+            state.monitoring?.let { monitoring ->
+                Spacer(Modifier.height(14.dp))
+                MessageBanner(
+                    text = "${monitoring.headline}. ${monitoring.advice}",
+                    tone = if (monitoring.headsetDetected) BannerTone.SUCCESS else BannerTone.WARNING,
+                )
+                Spacer(Modifier.height(8.dp))
+                SecondaryActionButton(
+                    text = "TEST THE VOICE CHAIN (NO MIC NEEDED)",
+                    icon = VcIcon.Sparkle,
+                    onClick = { onNavigate(Screen.Settings) },
+                    modifier = Modifier.fillMaxWidth(),
+                    accent = ViceColors.Mint,
+                )
             }
 
             if (state.failure != null) {
@@ -247,9 +267,11 @@ fun LiveVoiceScreen(
 
             MessageBanner(
                 text = "Live Mode plays the transformed voice through your phone's own output so you " +
-                    "can hear it. Android does not allow an app to take over another app's microphone, " +
-                    "so this audio cannot be pushed into Mobile Legends or a Messenger call - see " +
-                    "Mobile Legends Mode for what is possible and what is not.",
+                    "can hear it. Headphones give by far the clearest result: on the speaker you also " +
+                    "hear your own voice directly through your head, and echo reduction has to hold " +
+                    "the level down. Android does not allow an app to take over another app's " +
+                    "microphone, so this audio cannot be pushed into Mobile Legends or a Messenger " +
+                    "call - see Mobile Legends Mode for what is possible and what is not.",
                 tone = BannerTone.INFO,
             )
 

@@ -114,6 +114,16 @@ class PhaseVocoderStage(
     /** True until the first processed frame, when no reliable phase history exists yet. */
     val isWarmingUp: Boolean get() = firstFrame
 
+    /**
+     * The stretch the stage actually delivers.
+     *
+     * The synthesis hop is an integer, so a requested stretch of 1.3807 becomes a hop ratio of
+     * 353/256 = 1.3789. Anything driving this stage (the resampler downstream) must use this value,
+     * not the requested ratio: a mismatch of a fraction of a sample per frame slowly starves the
+     * pipeline, which shows up as buffer gaps that keep climbing while monitoring.
+     */
+    val effectiveStretch: Float get() = synthesisHop.toFloat() / analysisHop
+
     override fun reset() {
         super.reset()
         previousPhase.fill(0f)

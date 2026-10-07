@@ -8,8 +8,10 @@ import android.media.AudioManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vicechanger.app.audio.AudioConfig
+import com.vicechanger.app.audio.AudioDeviceMonitor
 import com.vicechanger.app.audio.AudioEngine
 import com.vicechanger.app.audio.AudioFailure
+import com.vicechanger.app.audio.MonitoringPolicy
 import com.vicechanger.app.settings.AppSettings
 import com.vicechanger.app.voice.VoicePreset
 import com.vicechanger.app.voice.VoiceTransformer
@@ -45,9 +47,19 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         val failure: AudioFailure? = null,
         val warmup: Boolean = false,
         val startedAtMillis: Long = 0,
+        val monitoring: MonitoringPolicy.Decision? = null,
+        val captureSource: String = "",
     )
 
     private val engine = AudioEngine(application)
+
+    /** Used to notice a headset being plugged in or removed while monitoring. */
+    private val devices = AudioDeviceMonitor(application)
+
+    /** The monitoring decision currently in force (headset aware). */
+    private var monitoring: MonitoringPolicy.Decision? = null
+    private var lastPreset: VoicePreset? = null
+    private var lastSettings: AppSettings? = null
 
     private val audioManager: AudioManager? =
         application.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -76,25 +88,53 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Push a new voice / settings combination into the running engine. */
     fun applyVoice(preset: VoicePreset, settings: AppSettings) {
-        engine.setParams(VoiceTransformer.transform(preset, settings))
-        engine.setInputGainDb(settings.inputGainDb)
-        engine.setOutputVolume(settings.outputVolume)
+        lastPreset = preset
+        lastSettings = settings
+        val effective = withMonitoring(settings)
+        engine.setParams(VoiceTransformer.transform(preset, effective))
+        engine.setInputGainDb(effective.inputGainDb)
+        engine.setOutputVolume(effective.outputVolume)
         engine.setPreferredDevices(settings.preferredInputDeviceId, settings.preferredOutputDeviceId)
+    }
+
+    /** Settings with the headset-aware monitoring decisions folded in. */
+    private fun withMonitoring(settings: AppSettings): AppSettings {
+        val deviceState = devices.refresh()
+        val headsetLabel = deviceState.outputs.firstOrNull { it.isBluetooth || it.isWired }?.label
+        val decision = monitoring?.takeIf { it.headsetDetected == deviceState.hasHeadset }
+            ?: MonitoringPolicy.decide(settings, deviceState.hasHeadset, headsetLabel).also { monitoring = it }
+        return settings.copy(
+            echoReduction = decision.echoReduction,
+            echoReductionAmountDb = decision.echoReductionDb,
+            outputVolume = decision.outputVolume,
+        )
     }
 
     fun start(preset: VoicePreset, settings: AppSettings) {
         if (_state.value.running) return
+        val deviceState = devices.refresh()
+        val headsetLabel = deviceState.outputs.firstOrNull { it.isBluetooth || it.isWired }?.label
+        val decision = MonitoringPolicy.decide(settings, deviceState.hasHeadset, headsetLabel)
+        monitoring = decision
+        lastPreset = preset
+        lastSettings = settings
+        val effective = settings.copy(
+            echoReduction = decision.echoReduction,
+            echoReductionAmountDb = decision.echoReductionDb,
+            outputVolume = decision.outputVolume,
+        )
         requestAudioFocus()
-        val params = VoiceTransformer.transform(preset, settings)
+        val params = VoiceTransformer.transform(preset, effective)
         val config = AudioEngine.EngineConfig(
             blockSize = if (settings.lowLatencyMode) AudioConfig.BLOCK_SIZE_LOW_LATENCY else AudioConfig.BLOCK_SIZE,
             lowLatencyMode = settings.lowLatencyMode,
             outputBufferBlocks = if (settings.lowLatencyMode) 3 else 5,
             params = params,
-            inputGainDb = settings.inputGainDb,
-            outputVolume = settings.outputVolume,
+            inputGainDb = effective.inputGainDb,
+            outputVolume = effective.outputVolume,
             preferredInputDeviceId = settings.preferredInputDeviceId,
             preferredOutputDeviceId = settings.preferredOutputDeviceId,
+            forceSpeaker = !decision.headsetDetected,
         )
         val result = engine.start(config)
         result.onSuccess {
@@ -102,6 +142,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 running = true,
                 failure = null,
                 muted = false,
+                monitoring = decision,
                 startedAtMillis = System.currentTimeMillis(),
             )
             startPolling()
@@ -159,11 +200,31 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     /** Samples the engine is holding back right now - shown next to the latency readout. */
     fun bufferedSamples(): Int = engine.bufferedSamples()
 
+    /**
+     * Re-evaluate the monitoring policy: if a headset appeared or disappeared, the echo reduction
+     * and monitor level must follow, and the speaker forcing must flip.
+     */
+    private fun recheckMonitoring() {
+        val preset = lastPreset ?: return
+        val settings = lastSettings ?: return
+        val deviceState = devices.refresh()
+        val current = monitoring ?: return
+        if (current.headsetDetected == deviceState.hasHeadset) return
+        val headsetLabel = deviceState.outputs.firstOrNull { it.isBluetooth || it.isWired }?.label
+        val decision = MonitoringPolicy.decide(settings, deviceState.hasHeadset, headsetLabel)
+        monitoring = decision
+        engine.setSpeakerForced(!decision.headsetDetected)
+        applyVoice(preset, settings)
+        _state.value = _state.value.copy(monitoring = decision)
+    }
+
     private fun startPolling() {
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
+            var ticks = 0
             while (isActive) {
                 delay(60)
+                ticks++
                 val snapshot = engine.snapshot()
                 val failure = engine.lastFailure
                 if (!snapshot.running && failure != null) {
@@ -187,8 +248,12 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     underruns = snapshot.underruns,
                     inputDevice = snapshot.inputDeviceLabel,
                     outputDevice = snapshot.outputDeviceLabel,
+                    captureSource = snapshot.captureSourceLabel,
                     warmup = snapshot.running && snapshot.blocksProcessed < 20,
                 )
+                // A headset plugged in (or pulled out) mid-session changes the whole monitoring
+                // configuration, so re-apply it instead of leaving the user with ducked audio.
+                if (ticks % 10 == 0) recheckMonitoring()
             }
         }
     }

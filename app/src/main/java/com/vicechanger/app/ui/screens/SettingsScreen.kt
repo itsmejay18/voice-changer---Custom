@@ -22,10 +22,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vicechanger.app.BuildConfig
 import com.vicechanger.app.audio.AudioConfig
+import com.vicechanger.app.audio.MonitoringPolicy
 import com.vicechanger.app.settings.ThemeMode
 import com.vicechanger.app.ui.Screen
 import com.vicechanger.app.ui.components.BannerTone
 import com.vicechanger.app.ui.components.MessageBanner
+import com.vicechanger.app.ui.components.PrimaryActionButton
 import com.vicechanger.app.ui.components.ScreenHeader
 import com.vicechanger.app.ui.components.SecondaryActionButton
 import com.vicechanger.app.ui.components.SectionHeader
@@ -53,6 +55,7 @@ fun SettingsScreen(
     val devices by app.devices.state.collectAsStateWithLifecycle()
     val preset by app.selectedPreset.collectAsStateWithLifecycle()
     val draft by app.customDraft.collectAsStateWithLifecycle()
+    val selfTest by app.selfTest.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -262,6 +265,74 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         accent = if (selected) ViceColors.Rose else MaterialTheme.colorScheme.secondary,
                     )
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // ----------------------------------------------------------- diagnostics ----
+            SectionHeader(text = "Diagnostics")
+            VcPanel(modifier = Modifier.fillMaxWidth(), accent = ViceColors.Mint) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Monitoring right now",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = MonitoringPolicy.decide(
+                            settings = settings,
+                            headsetDetected = app.headsetConnected(),
+                            headsetLabel = app.headsetLabel(),
+                        ).headline,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = ViceColors.Mint,
+                    )
+                    Text(
+                        text = MonitoringPolicy.decide(
+                            settings = settings,
+                            headsetDetected = app.headsetConnected(),
+                            headsetLabel = app.headsetLabel(),
+                        ).advice,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "Hear it with no microphone involved. This synthesises a vowel, runs " +
+                            "it through the real DSP chain with the voice you selected above, then " +
+                            "shows the measured pitch and envelope change and plays the result.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    PrimaryActionButton(
+                        text = if (selfTest.running) "RUNNING SELF-TEST..." else "RUN DSP SELF-TEST + PLAY RESULT",
+                        icon = VcIcon.Sparkle,
+                        onClick = { app.runSelfTest(preset, settings) },
+                        enabled = !selfTest.running,
+                    )
+                    selfTest.summary?.let { summary ->
+                        Spacer(Modifier.height(10.dp))
+                        MessageBanner(
+                            text = summary,
+                            tone = if (selfTest.passed) BannerTone.SUCCESS else BannerTone.ERROR,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        SecondaryActionButton(
+                            text = if (selfTest.playing) "STOP PLAYBACK" else "PLAY THE RESULT AGAIN",
+                            icon = if (selfTest.playing) VcIcon.Stop else VcIcon.Play,
+                            onClick = {
+                                if (selfTest.playing) app.stopSelfTestPlayback() else app.playSelfTest()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    selfTest.error?.let { error ->
+                        Spacer(Modifier.height(10.dp))
+                        MessageBanner(text = error, tone = BannerTone.ERROR)
+                    }
                 }
             }
 

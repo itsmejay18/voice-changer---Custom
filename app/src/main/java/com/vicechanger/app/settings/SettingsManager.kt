@@ -15,7 +15,7 @@ enum class ThemeMode { DARK, LIGHT, SYSTEM }
 data class AppSettings(
     val defaultPresetId: String = "natural_girl",
     val inputGainDb: Float = 0f,
-    val outputVolume: Float = 0.9f,
+    val outputVolume: Float = 1.0f,
     val noiseSuppression: Float = 0.35f,
     val echoReduction: Boolean = true,
     val echoReductionAmountDb: Float = 18f,

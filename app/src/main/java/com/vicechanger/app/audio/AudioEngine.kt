@@ -1,8 +1,12 @@
 package com.vicechanger.app.audio
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Process
+import android.util.Log
 import kotlin.math.abs
 import kotlin.math.pow
 
@@ -31,6 +35,12 @@ class AudioEngine(
         val outputVolume: Float = 1f,
         val preferredInputDeviceId: Int = -1,
         val preferredOutputDeviceId: Int = -1,
+        /**
+         * Force playback out of the phone speaker. Live monitoring is useless if the transformed
+         * voice goes to the earpiece, and the platform will happily choose the earpiece when a
+         * capture session looks like a call.
+         */
+        val forceSpeaker: Boolean = false,
     )
 
     data class Snapshot(
@@ -44,6 +54,8 @@ class AudioEngine(
         val underruns: Long,
         val inputDeviceLabel: String,
         val outputDeviceLabel: String,
+        val captureSourceLabel: String,
+        val speakerForced: Boolean,
     )
 
     private val processor = AudioProcessor(sampleRate)
@@ -67,6 +79,8 @@ class AudioEngine(
     @Volatile private var outputPeak = -60f
     @Volatile private var deviceSummaryIn = "Default mic"
     @Volatile private var deviceSummaryOut = "Default output"
+    @Volatile private var sourceLabel = "not opened"
+    @Volatile private var speakerForced = false
     @Volatile private var blockSize = AudioConfig.BLOCK_SIZE
 
     @Volatile var lastFailure: AudioFailure? = null
@@ -118,9 +132,20 @@ class AudioEngine(
         appliedOutputDeviceId = config.preferredOutputDeviceId
         deviceSummaryIn = inDevice?.let { AudioInput.describe(it) } ?: "Default mic"
         deviceSummaryOut = outDevice?.let { AudioOutput.describe(it) } ?: "Default output"
+        sourceLabel = capture.sourceLabel
+        if (config.forceSpeaker) forceSpeakerOutput(true)
 
         processor.configure(config.params)
         pendingParams = null
+
+        Log.i(
+            TAG,
+            "start: source=$sourceLabel block=$blockSize samples (${
+                (blockSize * 1000f / sampleRate).toInt()
+            } ms) latencyMode=${config.lowLatencyMode} in=$deviceSummaryIn out=$deviceSummaryOut " +
+                "speakerForced=${config.forceSpeaker} gain=${config.inputGainDb}dB " +
+                "volume=${config.outputVolume} params=[${config.params.summary()}]",
+        )
 
         running = true
         val thread = Thread({ runLoop() }, "ViceChanger-Audio")
@@ -132,7 +157,19 @@ class AudioEngine(
     private fun finishStartFailure(error: Throwable): Result<Unit> {
         val failure = (error as? AudioException)?.failure ?: AudioFailure.AUDIO_INIT_FAILED
         lastFailure = failure
+        Log.e(TAG, "start failed: ${failure.name} - ${failure.message}")
         return Result.failure(error)
+    }
+
+    /** Playback must come out of the loudspeaker while monitoring; the earpiece is not usable. */
+    private fun forceSpeakerOutput(enabled: Boolean) {
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        runCatching {
+            manager.mode = AudioManager.MODE_NORMAL
+            manager.isSpeakerphoneOn = enabled
+            speakerForced = enabled && manager.isSpeakerphoneOn
+            Log.i(TAG, "speaker routing: requested=$enabled actual=${manager.isSpeakerphoneOn} mode=${manager.mode}")
+        }.onFailure { Log.w(TAG, "speaker routing failed: ${it.message}") }
     }
 
     private fun runLoop() {
@@ -150,6 +187,7 @@ class AudioEngine(
             val read = capture.read(shortsIn, 0, blockSize)
             if (read < 0) {
                 lastFailure = AudioFailure.MICROPHONE_UNAVAILABLE
+                Log.e(TAG, "microphone read failed (code $read) after $blocks blocks - stopping")
                 break
             }
             if (read == 0) continue
@@ -167,9 +205,11 @@ class AudioEngine(
             }
 
             if (!reconfiguring && pendingFadeBlock) {
-                processor.configure(pendingParamsTaken!!)
+                val applied = pendingParamsTaken!!
+                processor.configure(applied)
                 pendingFadeBlock = false
                 fadeGain = 0f
+                Log.i(TAG, "reconfigured: ${applied.summary()}")
             }
 
             processor.process(floatsIn, read, floatsOut)
@@ -191,6 +231,7 @@ class AudioEngine(
 
             if (!playback.write(shortsOut, read)) {
                 lastFailure = AudioFailure.OUTPUT_INIT_FAILED
+                Log.e(TAG, "output write failed after $blocks blocks - stopping")
                 break
             }
 
@@ -206,6 +247,7 @@ class AudioEngine(
         output = null
         running = false
         worker = null
+        Log.i(TAG, "audio thread exited after $blocks blocks")
     }
 
     private var pendingParamsTaken: ProcessorParams? = null
@@ -238,16 +280,37 @@ class AudioEngine(
     private fun publishMeters(capture: AudioInput, playback: AudioOutput) {
         blocks++
         meterTick++
-        if (meterTick % 4 != 0) return
-        inputLevel = processor.inputLevelDb.let { db -> ((db - METER_FLOOR_DB) / -METER_FLOOR_DB).coerceIn(0f, 1f) }
-        outputLevel = processor.outputLevelDb.let { db -> ((db - METER_FLOOR_DB) / -METER_FLOOR_DB).coerceIn(0f, 1f) }
-        outputPeak = processor.outputPeakDb
-        val buffered = (capture.bufferedFrames() + processor.bufferedSamples + playback.bufferedFrames())
-        latencyMs = buffered * 1000f / sampleRate
+        if (meterTick % 4 == 0) {
+            inputLevel = processor.inputLevelDb.let { db -> ((db - METER_FLOOR_DB) / -METER_FLOOR_DB).coerceIn(0f, 1f) }
+            outputLevel = processor.outputLevelDb.let { db -> ((db - METER_FLOOR_DB) / -METER_FLOOR_DB).coerceIn(0f, 1f) }
+            outputPeak = processor.outputPeakDb
+            val buffered = (capture.bufferedFrames() + processor.bufferedSamples + playback.bufferedFrames())
+            latencyMs = buffered * 1000f / sampleRate
+        }
+        if (blocks % LEVEL_LOG_BLOCKS == 0L) {
+            Log.i(
+                TAG,
+                "levels: in=%.1f dB out=%.1f dB peak=%.1f dB gainRed=%.1f dB lim=%.1f dB " +
+                    "echoDuck=%.1f dB buffered=%d delay=%.1f ms blocks=%d gaps=%d muted=%b".format(
+                        processor.inputLevelDb,
+                        processor.outputLevelDb,
+                        processor.outputPeakDb,
+                        processor.gainReductionDb,
+                        processor.limiterReductionDb,
+                        processor.echoReductionDb,
+                        capture.bufferedFrames() + processor.bufferedSamples + playback.bufferedFrames(),
+                        latencyMs,
+                        blocks,
+                        processor.underruns,
+                        muted,
+                    ),
+            )
+        }
     }
 
     fun stop() {
         running = false
+        Log.i(TAG, "stop requested: blocks=$blocks gaps=${processor.underruns} latency=${latencyMs}ms")
         val thread = worker
         if (thread != null && thread !== Thread.currentThread()) {
             runCatching { thread.join(1500) }
@@ -260,6 +323,7 @@ class AudioEngine(
         input = null
         output = null
         worker = null
+        if (speakerForced) forceSpeakerOutput(false)
         inputLevel = 0f
         outputLevel = 0f
     }
@@ -286,6 +350,11 @@ class AudioEngine(
         pendingOutputDeviceId = outputDeviceId
     }
 
+    /** Force (or stop forcing) playback out of the loudspeaker, e.g. when a headset appears. */
+    fun setSpeakerForced(enabled: Boolean) {
+        forceSpeakerOutput(enabled)
+    }
+
     fun snapshot(): Snapshot = Snapshot(
         running = running,
         muted = muted,
@@ -297,14 +366,20 @@ class AudioEngine(
         underruns = processor.underruns,
         inputDeviceLabel = deviceSummaryIn,
         outputDeviceLabel = deviceSummaryOut,
+        captureSourceLabel = sourceLabel,
+        speakerForced = speakerForced,
     )
 
     /** Frames the engine is currently holding back, straight from the stage buffers. */
     fun bufferedSamples(): Int = processor.bufferedSamples
 
     companion object {
+        const val TAG = "ViceChangerEngine"
         private const val METER_FLOOR_DB = 60f
         private const val FADE_STEP = 0.02f
+
+        /** How often the engine dumps a measured level line to logcat. */
+        private const val LEVEL_LOG_BLOCKS = 60L
 
         fun dbToLinear(db: Float): Float = 10f.pow(db / 20f)
 

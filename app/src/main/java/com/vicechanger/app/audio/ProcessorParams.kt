@@ -46,4 +46,19 @@ data class ProcessorParams(
         get() = kotlin.math.abs(formantRatio - 1f) > 0.004f || noiseSuppression > 0.01f
 
     val isRobotEffect: Boolean get() = ringModDepth > 0.01f || combEnabled
+
+    /** One-line description of the whole chain, for logcat and the diagnostics screen. */
+    fun summary(): String = StringBuilder()
+        .append("pitch=").append("%+.1fst".format(pitchSemitones))
+        .append("(x").append("%.3f".format(if (needsPitch) Math.pow(2.0, pitchSemitones / 12.0).toFloat() else 1f)).append(")")
+        .append(" formant=x").append("%.2f".format(formantRatio))
+        .append(" noise=").append("%.2f".format(noiseSuppression))
+        .append(" hp=").append("%.0fHz".format(highpassHz))
+        .append(" sat=").append("%.1f/%.2f".format(saturationDrive, saturationMix))
+        .append(if (isRobotEffect) " ring=%.0fHz@%.2f".format(ringModHz, ringModDepth) else "")
+        .append(" comp=").append("%.0fdB/%.1f:1".format(compressorThresholdDb, compressorRatio))
+        .append(" eq=").append(eqStages.size)
+        .append(" out=").append("%+.1fdB".format(outputGainDb))
+        .append(" echo=").append(if (echoReductionEnabled) "on/%.0fdB".format(echoReductionDb) else "off")
+        .toString()
 }
