@@ -54,11 +54,36 @@ seconds, transforms and plays back what a teammate would hear.
 
 ---
 
+## How to hear it (read this before judging the voice)
+
+Monitoring decides whether you actually hear a female voice, and it is the part that made an
+earlier build sound "like me, nothing happened":
+
+- **Use headphones.** With a headset connected, echo reduction is switched off automatically and
+  the monitor runs at full level - the configuration the DSP is tuned for. The transformed voice
+  is then clearly audible.
+- **On the phone speaker you always hear two things at once**: the transformed voice coming out
+  of the speaker, and your own voice arriving directly through your head (bone conduction). The
+  Live screen tells you which mode you are in, and echo reduction is bounded to 12 dB so the
+  transformed voice can never be ducked into the background exactly while you speak.
+- **Settings -> Diagnostics -> `RUN DSP SELF-TEST + PLAY RESULT`** proves the chain with no
+  microphone involved: it synthesises a vowel, runs it through the real DSP chain with the voice
+  you selected, prints the measured pitch / envelope / level change and plays the result.
+  Measured on a Huawei P20 Pro (Android 10): `180.0 Hz -> 247.4 Hz (5.5 semitones measured, 5.5
+  requested)`, `vocal tract envelope 716 Hz -> 1107 Hz`, `pipeline delay 20 ms`.
+- If the self-test plays a shifted voice but Live Mode still sounds like you, the problem is
+  monitoring (headset vs speaker, monitor volume), not the audio engine - which is exactly why
+  the self-test exists.
+
+---
+
 ## What it does NOT do (please read)
 
 - **It cannot replace your microphone inside another app.** Mobile Legends, Messenger calls,
   Discord and every other app read the microphone stream from the system. A normal (non-rooted)
-  Android app has no API to insert audio into that stream. VICE CHANGER says so on screen
+  Android app has no API to insert audio into that stream - and this is **not a permission you can
+  grant**: an overlay (`SYSTEM_ALERT_WINDOW`), a foreground service, or any other Android
+  permission changes nothing about another app's microphone. VICE CHANGER says so on screen
   instead of pretending, and the routing probe shows the honest verdict:
   *"Your device does not allow third-party microphone routing for this mode."*
 - **No root exploits, no accessibility abuse, no hidden background microphone.** The engine is
@@ -90,7 +115,7 @@ device even by accident.
 export JAVA_HOME=<jdk17>
 export ANDROID_HOME=<android-sdk>       # platforms android-36, build-tools 36.0.0
 ./gradlew assembleDebug                 # debug APK
-./gradlew testDebugUnitTest             # 107 unit tests
+./gradlew testDebugUnitTest             # 122 unit tests
 ./gradlew assembleRelease               # signed release APK (needs keystore.properties)
 ```
 
